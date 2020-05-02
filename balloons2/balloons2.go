@@ -90,17 +90,26 @@ func (balloon *balloon) getCircle() (x, y, r float32){
 	return x,y,r
 }
 
-func (balloon * balloon) update(elapsedTime float32, currentMouseState, prevMouseState mouseState, audioState *audioState) {
-
+func updateBalloons(balloons []*balloon, elapsedTime float32, currentMouseState,
+	prevMouseState mouseState, audioState *audioState) []*balloon{
+	
 	numAnimations := 16
+	balloonClicked := false
+	balloonsExploded := false
+	for i := len(balloons)-1; i >= 0; i--{
+	balloon := balloons[i]
+
+	if balloon.exploding {
 	animationElapsed := float32(time.Since(balloon.explosionStart).Seconds() * 1000)
 	animationIndex := numAnimations - 1 - int(animationElapsed / balloon.explosionInterval)
 	if animationIndex < 0{
 		balloon.exploding = false
 		balloon.exploded = true
+		balloonsExploded = true
 	}
+}
 
-	if !prevMouseState.leftButton && currentMouseState.leftButton {
+	if !balloonClicked && !prevMouseState.leftButton && currentMouseState.leftButton {
 		x,y,r := balloon.getCircle()
 		mouseX := currentMouseState.x
 		mouseY := currentMouseState.y
@@ -108,7 +117,7 @@ func (balloon * balloon) update(elapsedTime float32, currentMouseState, prevMous
 		yDiff := float32(mouseY) - y
 		dist := float32(math.Sqrt(float64(xDiff * xDiff + yDiff * yDiff)))
 		if dist < r {
-			
+			balloonClicked = true
 			sdl.ClearQueuedAudio(audioState.deviceID)
 			sdl.QueueAudio(audioState.deviceID, audioState.explosionBytes)
 			sdl.PauseAudioDevice(audioState.deviceID, false)
@@ -130,6 +139,17 @@ func (balloon * balloon) update(elapsedTime float32, currentMouseState, prevMous
 	}
 
 	balloon.pos = Add(balloon.pos, Mult(balloon.dir, elapsedTime))
+	}
+	if balloonsExploded {
+		filteredBalloons := balloons[0:0]
+		for _, balloon := range balloons {
+			if !balloon.exploded {
+				filteredBalloons = append(filteredBalloons, balloon)
+			}
+		}
+		balloons = filteredBalloons
+	}
+	return balloons
 }	
 
 func (balloon *balloon) draw(renderer *sdl.Renderer) {
@@ -232,7 +252,7 @@ func loadBalloons(renderer *sdl.Renderer, numBalloons int)[]*balloon{
 
 	explosionTexture := imgFileToTexture(renderer, "balloons2/explosion.png")
 
-	balloonStrs := []string{"balloons/balloon_red.png", "balloons/balloon_green.png", "balloons/balloon_blue.png"}
+	balloonStrs := []string{"balloons2/balloon_red.png", "balloons/balloon_green.png", "balloons/balloon_blue.png"}
 	balloonTextures:= make([]*sdl.Texture, len(balloonStrs))
 
 	for i, bstr := range balloonStrs {	
@@ -362,7 +382,7 @@ for {
 	currentMouseState = getMouseState()
 
 	for event := sdl.PollEvent(); event !=nil; event = sdl.PollEvent() {
-		switch e := event.(type) {
+		switch e:= event.(type) {
 		case *sdl.QuitEvent:
 			return
 		case *sdl.TouchFingerEvent:
@@ -380,9 +400,8 @@ for {
 
 	renderer.Copy(cloudTexture, nil, nil)
 
-	for _, balloon := range balloons {
-		balloon.update(elapsedTime, currentMouseState, prevMouseState, &audioState)
-	}
+	
+	balloons = updateBalloons(balloons, elapsedTime, currentMouseState, prevMouseState, &audioState)
 
 	sort.Stable(balloonArray(balloons))				//to sort bigger in fron(close), smaller on back(far)
 

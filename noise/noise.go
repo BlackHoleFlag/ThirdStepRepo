@@ -65,7 +65,7 @@ func MakeNoise(noiseType NoiseType, frequency, lactunarity, gain float32, octave
 			end := start + batchSize - 1
 			for j := start; j < end; j++{
 			x := j % w
-			y := (j - x) / h
+			y := (j - x) / w
 
 				if noiseType == TURBULENCE {
 			noise[j] = Turbulence(float32(x), float32(y), frequency, lactunarity, gain, octaves )  //append to slice of noise (can modify frequensies/lactunarity/gain/oktaves to change picture shown, like tuning old tv)

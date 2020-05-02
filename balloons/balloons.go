@@ -6,6 +6,7 @@ import (
 	"os"
 	"fmt"
 	"time"
+	"github.com/yawhoo/noise"
 	"image/png"
 	"github.com/veandco/go-sdl2/sdl"
 )
@@ -16,6 +17,7 @@ type texture struct {
 	pos
 	pixels []byte
 	w,h, pitch int									//pitch = width * size of pixel
+	scale float32
 }
 
 type rgba struct{
@@ -38,6 +40,79 @@ func setPixel(x, y int, c rgba, pixels []byte) {
 		pixels[index] = c.r
 		pixels[index+1] = c.g
 		pixels[index+2] = c.b 
+	}
+}
+
+func (tex *texture) drawScaled (scaleX, scaleY float32, pixels []byte){			//used for scaling balloons to mimic dept
+	newWidth := int(float32(tex.w) * scaleX)
+	newHeight := int(float32(tex.h) * scaleY)
+	texW4 := tex.w *4			//<--pitch
+	for y := 0; y < newHeight; y++ {
+		fy := float32(y)/ float32(newHeight) * float32(tex.h -1)
+		fyi := int(fy)
+		screenY := int(fy * scaleY) + int(tex.y)
+		screenIndex := screenY * winWidth * 4 + int(tex.x) * 4
+		for x := 0; x < newWidth; x++ {
+			fx := float32(x)/ float32(newWidth) * float32( tex.w -1)
+			screenX :=int(fx * scaleX) + int(tex.x)
+			if screenX >= 0 && screenX < winWidth && screenY >= 0 && screenY < winHeight {
+			fxi4 := int(fx) *4
+
+			pixels[screenIndex] = tex.pixels[fyi * texW4 + fxi4]	//red
+			screenIndex++	
+			pixels[screenIndex] = tex.pixels[fyi * texW4 + fxi4+1]	//green
+			screenIndex++
+			pixels[screenIndex] = tex.pixels[fyi * texW4 + fxi4+2]	//blue
+			screenIndex++ 											//skip alfa
+			screenIndex++
+			}
+		}
+	}
+}
+
+func flerp(a,b,pct float32) float32 {
+	return a+(b-a)* pct
+}
+
+func blerp(c00, c10, c01, c11, tx, ty float32) float32{
+	return flerp(flerp(c00, c10, tx), flerp(c01, c11, tx), ty)
+}
+
+func (tex *texture) drawBilenearScaled(scaleX, scaleY float32, pixels []byte){			//used for scaling balloons to mimic dept
+	newWidth := int(float32(tex.w) * scaleX)
+	newHeight := int(float32(tex.h) * scaleY)
+	texW4 := tex.w *4			//<--pitch
+	for y := 0; y < newHeight; y++ {
+		fy := float32(y)/ float32(newHeight) * float32(tex.h -1)
+		fyi := int(fy)
+		screenY := int(fy * scaleY) + int(tex.y)
+		screenIndex := screenY * winWidth * 4 + int(tex.x) * 4
+		ty := fy - float32(fyi)
+		for x := 0; x < newWidth; x++ {
+			fx := float32(x)/ float32(newWidth) * float32( tex.w -1)
+			screenX :=int(fx * scaleX) + int(tex.x)
+			if screenX >= 0 && screenX < winWidth && screenY >= 0 && screenY < winHeight {
+			fxi := int(fx) 
+				//indexes
+			c00i := fyi * texW4 + fxi * 4
+			c10i := fyi * texW4 + (fxi + 1) * 4
+			c01i := (fyi + 1) * texW4 + fxi * 4
+			c11i := (fyi + 1) * texW4 + (fxi + 1) * 4
+
+			tx := fx - float32(fxi)					//percentage between top 2 pixels
+				//colors
+			for i := 0; i < 4; i++ {
+				c00 := float32(tex.pixels[c00i + i])
+				c10 := float32(tex.pixels[c10i + i])
+				c01 := float32(tex.pixels[c01i + i])
+				c11 := float32(tex.pixels[c11i + i])
+
+				pixels[screenIndex] = byte(blerp(c00,c10,c01,c11,tx,ty))
+				screenIndex++
+			}
+			
+			}
+		}
 	}
 }
 
@@ -125,9 +200,66 @@ func loadBalloons()[]texture{
 			bIndex++
 		}	
 	}
-	balloonTextures[i] = texture{pos{0,0}, balloonPixels, w, h, w *4}
+	balloonTextures[i] = texture{pos{float32(i*60),float32(i*60)}, balloonPixels, w, h, w *4, float32(1+i)}
 	}
 	return balloonTextures
+}
+
+func lerp(b1, b2 byte, pct float32)byte {						//gives us linear interpolation between 2 bytes
+	return byte(float32(b1) + pct *(float32(b2)- float32(b1))) 	//pct - percent
+}
+
+func colorLerp(c1, c2 rgba, pct float32) rgba {				//linear interpolation of each component (red,green,blue)
+	return rgba{lerp(c1.r, c2.r, pct), lerp(c1.g, c2.g, pct), lerp(c1.b, c2.b, pct)}
+
+}
+
+func getGradient(c1,c2 rgba) []rgba{						//making gradient from 2 colors
+	result:= make([]rgba, 256)
+	for i := range result {
+		pct := float32(i) / float32(255)
+		result[i] = colorLerp(c1, c2, pct)
+	}
+	return result
+}
+
+func getDualGradient(c1, c2, c3, c4 rgba) []rgba{					//second gradient
+	result:= make([]rgba, 256)
+	for i := range result {
+		pct := float32(i) / float32(255)
+		if pct < 0.5 {
+			result[i] = colorLerp(c1,c2, pct * float32(2))
+		} else {
+			result[i] = colorLerp(c3, c4, pct * float32(1.5)- float32(0.5))
+		}
+		
+	}
+	return result
+}
+
+func clamp(min, max, v int) int {							//this func make sure values in between range of what we looking for
+	if v < min {
+		v = min
+	}else if v > max {
+		v = max
+	}
+	return v
+}
+
+func rescaleAndDraw(noise []float32,min, max float32, gradient []rgba, w, h int) []byte {		//rescale noise --> turn in to byte --> set pixel array with that byte
+	result := make([]byte, w * h * 4)
+	scale := 255.0 / (max-min)								//to expand our values  from 0 to 255 using min-max
+	offset := min * scale
+
+	for i := range noise {									//going thru slice of noise
+		noise[i] = noise[i] * scale - offset				//modifying and putting back
+		c := gradient[clamp(0,255,int(noise[i]))]			//passing min/max and 
+		p := i * 4
+		result[p] = c.r									//set those byte in to pixels slice
+		result[p + 1] = c.g
+		result[p+ 2] = c.b
+	}
+	return result
 }
 
 func main(){
@@ -162,6 +294,11 @@ if err != nil {
 }
 defer tex.Destroy()
 
+cloudNoise, min, max := noise.MakeNoise(noise.FBM, 0.009, 0.4, 3, 3, winWidth, winHeight)			//noise for background
+cloudGradient := getGradient(rgba{0,0,240}, rgba{250,250,250})										//grad for bg
+cloudPixels := rescaleAndDraw(cloudNoise, min, max, cloudGradient, winWidth, winHeight) 
+cloudTexture := texture{pos{0,0}, cloudPixels, winWidth, winHeight, winWidth *4, 1}
+
 pixels := make([]byte, winWidth * winHeight * 4)  //we going to use "pixels"(slice of byte) to draw on a screen
 balloonTextures := loadBalloons()						//balloon textures
 dir := 1												//dirrection for balloon
@@ -174,10 +311,10 @@ for {
 			return
 		}
 	}
-	clear(pixels)
+	cloudTexture.draw(pixels)
 
 	for _, tex := range balloonTextures {
-		tex.drawAlpha(pixels)
+		tex.drawBilenearScaled(tex.scale, tex.scale, pixels)
 	}
 	balloonTextures[1].x += float32(1*dir)
 	if balloonTextures[1].x > 400 || balloonTextures[1].x < 0 {
